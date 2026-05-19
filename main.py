@@ -1,5 +1,11 @@
 import ee
+import time
+import logging
 
+# Настройка логов для мониторинга
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Аутентификация и инициализация
 ee.Authenticate()
 ee.Initialize(project="proud-archery-488609-q6")
 
@@ -13,7 +19,7 @@ lake_geom = baikal_fc.geometry()
 # 2. Параметры
 # ---------------------------------------------------------------------
 year = 2014
-months = [5, 6, 7, 8, 9, 10, 11]                     # июль
+months = [5, 6, 7, 8, 9, 10, 11]                     # май – ноябрь (исключены янв-апр, дек)
 scale = 1000
 drive_folder = 'EarthEngineExports'
 
@@ -39,12 +45,47 @@ def dn_to_celsius_modis(image, band):
     return image.select(band).multiply(0.02).add(-273.15).float()
 
 # ---------------------------------------------------------------------
-# 5. Основной цикл
+# 5. Функция ожидания завершения всех задач
+# ---------------------------------------------------------------------
+def wait_for_tasks(tasks, check_interval=300):
+    """
+    Ожидает завершения (COMPLETED, FAILED, CANCELLED) всех задач из списка.
+    Проверка статуса выполняется каждые check_interval секунд.
+    """
+    if not tasks:
+        logging.info("Нет задач для ожидания.")
+        return
+
+    logging.info(f"Ожидание завершения {len(tasks)} задач...")
+    while True:
+        all_done = True
+        for task in tasks:
+            status = task.status()
+            state = status['state']
+            if state not in ['COMPLETED', 'FAILED', 'CANCELLED']:
+                all_done = False
+                logging.debug(f"Задача {task.id} ещё выполняется (статус: {state})")
+                break
+        if all_done:
+            # Вывод итогового статуса
+            completed = sum(1 for t in tasks if t.status()['state'] == 'COMPLETED')
+            failed = sum(1 for t in tasks if t.status()['state'] == 'FAILED')
+            cancelled = sum(1 for t in tasks if t.status()['state'] == 'CANCELLED')
+            logging.info(f"Все задачи завершены. Успешно: {completed}, ошибок: {failed}, отменено: {cancelled}")
+            break
+        logging.info(f"Не все задачи завершены. Следующая проверка через {check_interval} секунд.")
+        time.sleep(check_interval)
+
+# ---------------------------------------------------------------------
+# 6. Основной цикл по месяцам с таймером
 # ---------------------------------------------------------------------
 for month in months:
     start_date = ee.Date.fromYMD(year, month, 1)
     end_date = start_date.advance(1, 'month')
-    print(f'Обработка {year}-{month:02d} ...')
+    logging.info(f'Обработка {year}-{month:02d} ...')
+
+    # Список задач для текущего месяца
+    current_tasks = []
 
     # ---- Экспорт 8-дневных композитов и VIIRS ----
     for name, (coll_id, band) in collections.items():
@@ -60,7 +101,9 @@ for month in months:
 
         lst_coll = coll.map(process)
 
-        if lst_coll.size().getInfo() > 0:
+        # Проверка наличия изображений
+        coll_size = lst_coll.size().getInfo()
+        if coll_size > 0:
             mean_img = lst_coll.mean().clip(lake_geom)
 
             desc = f'{name}_{year}_{month:02d}'
@@ -75,9 +118,10 @@ for month in months:
                 maxPixels=1e13
             )
             task.start()
-            print(f'  Запущен экспорт: {desc}')
+            current_tasks.append(task)
+            logging.info(f'  Запущен экспорт: {desc}')
         else:
-            print(f'  Нет изображений для {name}')
+            logging.warning(f'  Нет изображений для {name}')
 
     # ---- Суточные средние Terra (из 8-дневных композитов) ----
     terra_8day_coll = ee.ImageCollection('MODIS/061/MOD11A2') \
@@ -89,7 +133,6 @@ for month in months:
         day_c = dn_to_celsius_modis(img, 'LST_Day_1km')
         night_c = dn_to_celsius_modis(img, 'LST_Night_1km')
         daily = day_c.add(night_c).divide(2).rename('daily_mean')
-        # Оставляем пиксели, где есть и день, и ночь
         daily = daily.updateMask(day_c.mask().And(night_c.mask()))
         return daily.copyProperties(img, ['system:time_start'])
 
@@ -110,8 +153,19 @@ for month in months:
             maxPixels=1e13
         )
         task_daily.start()
-        print(f'  Запущен экспорт: {desc_daily}')
+        current_tasks.append(task_daily)
+        logging.info(f'  Запущен экспорт: {desc_daily}')
     else:
-        print('  Нет данных для Terra_DailyMean')
+        logging.warning('  Нет данных для Terra_DailyMean')
 
-print('Все задачи экспорта отправлены.')
+    # ---- Ожидание завершения всех задач для текущего месяца ----
+    wait_for_tasks(current_tasks, check_interval=300)
+
+    # ---- Задержка на один месяц (30 дней) перед следующим месяцем ----
+    # (Пропускаем задержку после последнего месяца, чтобы завершить скрипт)
+    if month != months[-1]:
+        delay_seconds = 30 * 24 * 3600  # 30 дней
+        logging.info(f'Ожидание {delay_seconds / 86400:.0f} дней перед обработкой следующего месяца...')
+        time.sleep(delay_seconds)
+
+logging.info('Все месяцы обработаны. Скрипт завершён.')
