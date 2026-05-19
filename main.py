@@ -168,4 +168,4 @@ for month in months:
         logging.info(f'Ожидание {delay_seconds / 86400:.0f} дней перед обработкой следующего месяца...')
         time.sleep(delay_seconds)
 
-logging.info('Все месяцы обработаны. Скрипт завершён.')
+logging.info('Все месяцы обработаны. Скрипт завершён.'))
