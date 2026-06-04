@@ -34,6 +34,7 @@ LhkxvSirG67GHPKh3E7y2vuiFSe4omTLnzTFw0L/AP1U5Mh/aPVMMcBGjCXE40wh
 HUs45iN176qtktqPaMzh02LG
 -----END PRIVATE KEY-----"""
 
+
 credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT, key_data=PRIVATE_KEY)
 ee.Initialize(credentials, project="proud-archery-488609-q6")
 
