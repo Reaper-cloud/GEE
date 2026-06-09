@@ -48,6 +48,7 @@ try:
     if count == 0:
         raise ValueError("FeatureCollection пуста")
     lake_geom = baikal_fc.geometry()
+    mask = ee.Image.constant(1).clip(lake_geom)
     logging.info(f"Ассет 'users/reaper/baik' загружен, {count} объектов.")
 except Exception as e:
     logging.error(f"Не удалось загрузить ассет: {e}")
@@ -116,7 +117,7 @@ for month in months:
         coll_size = lst_coll.size().getInfo()
 
         if coll_size > 0:
-            mean_img = lst_coll.mean().clip(lake_geom)
+            mean_img = lst_coll.mean().updateMask(mask)
             desc = f'{name}_{year}_{month:02d}'
             # Прямой путь в корень assets проекта
             asset_id = f'projects/proud-archery-488609-q6/assets/{desc}'
@@ -129,7 +130,8 @@ for month in months:
                 region=lake_geom,
                 scale=scale,
                 crs='EPSG:4326',
-                maxPixels=1e13
+                maxPixels=1e13,
+                overwrite=True
             )
             task.start()
             current_tasks.append(task)
@@ -153,7 +155,7 @@ for month in months:
     daily_means = terra_8day_coll.map(calc_daily_mean)
 
     if daily_means.size().getInfo() > 0:
-        monthly_daily_mean = daily_means.mean().clip(lake_geom)
+        monthly_daily_mean = daily_means.mean().updateMask(mask)
         desc_daily = f'Terra_DailyMean_8day_{year}_{month:02d}'
         asset_id_daily = f'projects/proud-archery-488609-q6/assets/{desc_daily}'
         asset_ids.append(asset_id_daily)
@@ -165,7 +167,8 @@ for month in months:
             region=lake_geom,
             scale=scale,
             crs='EPSG:4326',
-            maxPixels=1e13
+            maxPixels=1e13,
+            overwrite=True
         )
         task_daily.start()
         current_tasks.append(task_daily)
